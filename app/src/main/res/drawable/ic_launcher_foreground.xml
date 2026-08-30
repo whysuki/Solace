@@ -4,21 +4,8 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
-    <!-- 远山 -->
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M35,72 L49,51 L63,72 Z" />
-
-    <!-- 近山 -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M47,72 L61,55 L75,72 Z" />
-
-    <!-- 照片边框 -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="3.5"
-        android:pathData="M40,33 H68 Q75,33 75,40 V68 Q75,75 68,75 H40 Q33,75 33,68 V40 Q33,33 40,33 Z" />
+        android:fillType="evenOdd"
+        android:pathData="M33,54 a21,21 0 1,0 42,0 a21,21 0 1,0 -42,0 Z M48.96,66.22 L48.96,49.22 Q48.96,47.81 50.57,47.81 L61.34,47.81 Q64.06,47.81 64.06,50.53 L64.06,52.64 Q64.06,55.36 61.34,55.36 L52.69,55.36 L52.69,64.21 Q52.69,66.22 50.68,66.22 Z" />
 </vector>
