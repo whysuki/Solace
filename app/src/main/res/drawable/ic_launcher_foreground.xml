@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 远山 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M35,72 L49,51 L63,72 Z" />
+
+    <!-- 近山 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M47,72 L61,55 L75,72 Z" />
+
+    <!-- 照片边框 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5"
+        android:pathData="M40,33 H68 Q75,33 75,40 V68 Q75,75 68,75 H40 Q33,75 33,68 V40 Q33,33 40,33 Z" />
+</vector>
