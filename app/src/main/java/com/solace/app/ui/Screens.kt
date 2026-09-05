@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -80,6 +81,7 @@ fun SolaceApp(
     viewModel: MediaViewModel = viewModel(),
 ) {
     val state = viewModel.state.collectAsStateWithLifecycle().value
+    var playerIndex by remember { mutableStateOf<Int?>(null) }
 
     // 仅在首次进入或权限级别变化时重载；从设置页返回（access 未变）不重扫 MediaStore。
     LaunchedEffect(access) {
@@ -92,18 +94,30 @@ fun SolaceApp(
             onRetry = viewModel::load,
         )
         state.loadingFolders && state.folders.isEmpty() -> LoadingScreen()
-        state.currentFolder != null -> MediaListScreen(
-            folder = state.currentFolder,
-            items = state.folderItems,
-            loadingMore = state.loadingMore,
-            endReached = state.endReached,
-            sort = state.sort,
-            filter = state.filter,
-            onLoadMore = viewModel::loadMore,
-            onBack = viewModel::back,
-            onSortSelected = viewModel::setSort,
-            onFilterSelected = viewModel::setFilter,
-        )
+        state.currentFolder != null -> {
+            MediaListScreen(
+                folder = state.currentFolder,
+                items = state.folderItems,
+                loadingMore = state.loadingMore,
+                endReached = state.endReached,
+                sort = state.sort,
+                filter = state.filter,
+                onLoadMore = viewModel::loadMore,
+                onBack = viewModel::back,
+                onSortSelected = viewModel::setSort,
+                onFilterSelected = viewModel::setFilter,
+                onItemClick = { playerIndex = it },
+            )
+            val index = playerIndex
+            if (index != null) {
+                FullScreenPlayer(
+                    items = state.folderItems,
+                    initialIndex = index,
+                    onLoadMore = viewModel::loadMore,
+                    onClose = { playerIndex = null },
+                )
+            }
+        }
         else -> FolderListScreen(
             folders = state.folders,
             gridView = state.folderGridView,
@@ -336,6 +350,7 @@ private fun MediaListScreen(
     onBack: () -> Unit,
     onSortSelected: (FolderSort) -> Unit,
     onFilterSelected: (MediaFilter) -> Unit,
+    onItemClick: (Int) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -394,6 +409,7 @@ private fun MediaListScreen(
                 listState = listState,
                 items = items,
                 loadingMore = loadingMore,
+                onItemClick = onItemClick,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         }
@@ -405,6 +421,7 @@ private fun MediaGrid(
     listState: LazyGridState,
     items: List<MediaItem>,
     loadingMore: Boolean,
+    onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyVerticalGrid(
@@ -415,8 +432,8 @@ private fun MediaGrid(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        items(items, key = { it.key }) { item ->
-            MediaCell(item = item)
+        itemsIndexed(items, key = { _, item -> item.key }) { index, item ->
+            MediaCell(item = item, onClick = { onItemClick(index) })
         }
         if (loadingMore) {
             item(key = "loading") {
@@ -432,12 +449,13 @@ private fun MediaGrid(
 }
 
 @Composable
-private fun MediaCell(item: MediaItem) {
+private fun MediaCell(item: MediaItem, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .aspectRatio(1f)
             .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick),
     ) {
         MediaThumbnail(item = item, modifier = Modifier.fillMaxSize())
         if (item.type == MediaType.VIDEO) {

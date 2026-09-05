@@ -12,6 +12,7 @@ data class MediaItem(
     val mimeType: String,
     val durationMs: Long = 0,
     val dateAdded: Long = 0,
+    val dateTaken: Long = 0,
     val size: Long = 0,
     val path: String = "",
 ) {

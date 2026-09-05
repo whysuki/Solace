@@ -79,17 +79,36 @@ class MediaThumbnailFetcher(
     }
 
     class Factory : Fetcher.Factory<Uri> {
-        override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher? =
-            if (data.scheme == ContentResolver.SCHEME_CONTENT &&
-                data.authority == MediaStore.AUTHORITY
+        override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher? {
+            if (data.scheme != ContentResolver.SCHEME_CONTENT ||
+                data.authority != MediaStore.AUTHORITY
             ) {
+                return null
+            }
+            // 仅对缩略图级别的请求走系统缩略图缓存；全屏查看的目标尺寸很大，
+            // 落到 Coil 默认管道（按目标尺寸降采样解码，不整图解码，避免 OOM）。
+            return if (options.size.shouldUseThumbnail()) {
                 MediaThumbnailFetcher(options.context, data, options.size)
             } else {
                 null
             }
+        }
     }
 
     private companion object {
         const val DEFAULT_SIZE = 512
     }
+}
+
+// 缩略图尺寸上限（像素）：高于此视为全屏查看，交给 Coil 默认解码。
+private const val MAX_THUMBNAIL = 1024
+
+// 目标尺寸是否属于缩略图级别：两端可解析为像素且都不超过阈值才走缩略图缓存。
+// Original（尺寸未知）交给默认解码，避免把全屏原图误当缩略图。
+private fun coil.size.Size.shouldUseThumbnail(): Boolean {
+    if (this == coil.size.Size.ORIGINAL) return false
+    val w = (width as? Dimension.Pixels)?.px
+    val h = (height as? Dimension.Pixels)?.px
+    if (w == null || h == null) return false
+    return w <= MAX_THUMBNAIL && h <= MAX_THUMBNAIL
 }

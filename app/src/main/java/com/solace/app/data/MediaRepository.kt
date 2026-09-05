@@ -96,6 +96,7 @@ class MediaRepository(private val context: Context) {
             MediaStore.Files.FileColumns.MIME_TYPE,
             MediaStore.Files.FileColumns.DURATION,
             MediaStore.Files.FileColumns.DATE_ADDED,
+            MediaStore.Files.FileColumns.DATE_TAKEN,
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.RELATIVE_PATH,
         )
@@ -138,6 +139,7 @@ class MediaRepository(private val context: Context) {
             val mimeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
             val durationCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DURATION)
             val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED)
+            val dateTakenCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_TAKEN)
             val sizeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
             val pathCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
 
@@ -152,6 +154,7 @@ class MediaRepository(private val context: Context) {
                     mimeType = if (mimeCol >= 0) cursor.getString(mimeCol) ?: "" else "",
                     durationMs = if (durationCol >= 0) cursor.getLong(durationCol) else 0,
                     dateAdded = cursor.getLong(dateCol),
+                    dateTaken = if (dateTakenCol >= 0) cursor.getLong(dateTakenCol) else 0,
                     size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0,
                     path = if (pathCol >= 0) cursor.getString(pathCol) ?: "" else "",
                 )
