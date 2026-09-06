@@ -261,7 +261,7 @@ private fun PlayerTopBar(
 }
 
 @Composable
-private fun ImagePage(
+internal fun ImagePage(
     item: MediaItem,
     onToggle: () -> Unit,
 ) {
@@ -677,7 +677,7 @@ private fun ProgressPanel(text: String) {
  * [onFractionChangeFinished] 点击或拖动结束时回调一次（可空）。
  */
 @Composable
-private fun Scrubber(
+internal fun Scrubber(
     fraction: Float,
     onFractionChange: (Float) -> Unit,
     onFractionChangeFinished: (() -> Unit)? = null,
@@ -799,7 +799,7 @@ private fun VerticalScrubber(
     }
 }
 
-private fun formatPlayerDuration(durationMs: Long): String {
+internal fun formatPlayerDuration(durationMs: Long): String {
     val totalSeconds = durationMs / 1000
     val minutes = TimeUnit.SECONDS.toMinutes(totalSeconds)
     val seconds = totalSeconds - TimeUnit.MINUTES.toSeconds(minutes)

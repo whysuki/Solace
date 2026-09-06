@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
@@ -41,8 +43,13 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -51,6 +58,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,19 +83,136 @@ import com.solace.app.data.MediaItem
 import com.solace.app.data.MediaType
 import java.util.concurrent.TimeUnit
 
+private enum class MainTab { FILES, PORTFOLIO }
+
+/**
+ * 根组合：底部导航两个 Tab——「本地文件」（只读浏览，见 [FolderBrowserTab]）与
+ * 「作品集」（用户组织的独立特性，见 [PortfolioTab]）。切换 Tab 用
+ * [androidx.compose.runtime.saveable.rememberSaveableStateHolder] 保持各自状态。
+ */
 @Composable
 fun SolaceApp(
     access: MediaAccess,
     onOpenSettings: () -> Unit = {},
-    viewModel: MediaViewModel = viewModel(),
+    mediaViewModel: MediaViewModel = viewModel(),
+    portfolioViewModel: PortfolioViewModel = viewModel(),
 ) {
-    val state = viewModel.state.collectAsStateWithLifecycle().value
-    var playerIndex by remember { mutableStateOf<Int?>(null) }
+    var tab by rememberSaveable { mutableStateOf(MainTab.FILES) }
+    var createFlowOpen by remember { mutableStateOf(false) }
+    val saveableStateHolder = rememberSaveableStateHolder()
+    val portfolioUi by portfolioViewModel.state.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // 仅在首次进入或权限级别变化时重载；从设置页返回（access 未变）不重扫 MediaStore。
     LaunchedEffect(access) {
-        viewModel.load()
+        mediaViewModel.load()
+        portfolioViewModel.load()
     }
+
+    // 作品集操作结果（复制成功/失败等）经 snackbar 提示。
+    LaunchedEffect(portfolioUi.message) {
+        portfolioUi.message?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            portfolioViewModel.consumeMessage()
+        }
+    }
+
+    Box {
+        Scaffold(
+            // 外层只做容器：系统栏 inset 由内层各页面的 Scaffold/TopAppBar 各自处理，
+            // 否则状态栏高度被叠加两次，顶部内容被压下去一截。
+            contentWindowInsets = WindowInsets(0.dp),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            bottomBar = {
+                // 图标导航：无文字、无容器背景（跟随页面白色背景）。
+                NavigationBar(containerColor = Color.Transparent) {
+                    NavigationBarItem(
+                        selected = tab == MainTab.FILES,
+                        onClick = { tab = MainTab.FILES },
+                        icon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) },
+                        label = { Text("图库") },
+                    )
+                    NavigationBarItem(
+                        selected = tab == MainTab.PORTFOLIO,
+                        onClick = { tab = MainTab.PORTFOLIO },
+                        icon = { Icon(Icons.Filled.Inventory2, contentDescription = null) },
+                        label = { Text("作品集") },
+                    )
+                }
+            },
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+            ) {
+                saveableStateHolder.SaveableStateProvider(tab.name) {
+                    when (tab) {
+                        MainTab.FILES -> FolderBrowserTab(
+                            access = access,
+                            onOpenSettings = onOpenSettings,
+                            viewModel = mediaViewModel,
+                        )
+                        MainTab.PORTFOLIO -> PortfolioTab(
+                            viewModel = portfolioViewModel,
+                            onCreateWork = {
+                                createFlowOpen = true
+                                portfolioViewModel.openCreateFlow()
+                            },
+                        )
+                    }
+                }
+                // 复制大文件等后台操作进度条。
+                if (portfolioUi.busy) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.TopCenter),
+                    )
+                }
+            }
+        }
+
+        // 作品详情 feed 以全屏覆盖叠加（超出底部导航）：点作品进入，上下滑切换作品、左右滑切换素材。
+        val selectedWork = portfolioUi.selectedWork
+        if (tab == MainTab.PORTFOLIO && selectedWork != null) {
+            if (portfolioUi.works.isEmpty()) {
+                // 兜底：锚点作品已不在 works 中（被删除等竞态）时退化为空态页。
+                WorkEmptyScreen(
+                    title = selectedWork.title,
+                    onBack = portfolioViewModel::backFromWork,
+                )
+            } else {
+                WorkFeedPlayer(
+                    ui = portfolioUi,
+                    viewModel = portfolioViewModel,
+                )
+            }
+        }
+
+        // 「新建作品」两步弹窗以全屏覆盖叠加（同作品浏览，超出底部导航）。
+        if (tab == MainTab.PORTFOLIO && createFlowOpen) {
+            CreateWorkFlow(
+                ui = portfolioUi,
+                viewModel = portfolioViewModel,
+                onDismiss = {
+                    createFlowOpen = false
+                    portfolioViewModel.closeCreateFlow()
+                },
+            )
+        }
+    }
+}
+
+/** 本地文件 Tab：文件夹列表 → 内容网格 → 全屏查看器，全程只读不组织。 */
+@Composable
+private fun FolderBrowserTab(
+    access: MediaAccess,
+    onOpenSettings: () -> Unit,
+    viewModel: MediaViewModel,
+) {
+    val state = viewModel.state.collectAsStateWithLifecycle().value
+    var playerIndex by remember { mutableStateOf<Int?>(null) }
 
     when {
         state.foldersError != null -> ErrorScreen(
@@ -227,7 +353,8 @@ private fun FolderListScreen(
     }
 }
 
-private val overlayTextShadow = Shadow(
+/** 图片上的叠加文字统一阴影（白字 + 黑色柔影）。 */
+internal val overlayTextShadow = Shadow(
     color = Color.Black.copy(alpha = 0.8f),
     offset = Offset(1f, 1f),
     blurRadius = 4f,
@@ -433,7 +560,10 @@ private fun MediaGrid(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         itemsIndexed(items, key = { _, item -> item.key }) { index, item ->
-            MediaCell(item = item, onClick = { onItemClick(index) })
+            MediaCell(
+                item = item,
+                onClick = { onItemClick(index) },
+            )
         }
         if (loadingMore) {
             item(key = "loading") {
@@ -490,16 +620,19 @@ private fun MediaCell(item: MediaItem, onClick: () -> Unit) {
     }
 }
 
+/** 缩略图统一入口：MediaStore content Uri → 系统缩略图缓存（门控见 MediaThumbnailFetcher）。
+ * 网格用默认 Crop；大图预览等场景传 ContentScale.Fit。 */
 @Composable
-private fun MediaThumbnail(
+internal fun MediaThumbnail(
     item: MediaItem,
     modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
 ) {
     SubcomposeAsyncImage(
         model = item.uri,
         contentDescription = item.name,
         modifier = modifier,
-        contentScale = ContentScale.Crop,
+        contentScale = contentScale,
     ) {
         if (painter.state is AsyncImagePainter.State.Success) {
             SubcomposeAsyncImageContent()
@@ -520,7 +653,7 @@ private fun MediaThumbnail(
     }
 }
 
-private fun formatDuration(durationMs: Long): String {
+internal fun formatDuration(durationMs: Long): String {
     val totalSeconds = durationMs / 1000
     val minutes = TimeUnit.SECONDS.toMinutes(totalSeconds)
     val seconds = totalSeconds - TimeUnit.MINUTES.toSeconds(minutes)

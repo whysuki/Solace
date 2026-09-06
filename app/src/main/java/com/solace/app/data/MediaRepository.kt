@@ -3,6 +3,7 @@ package com.solace.app.data
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
+import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
@@ -10,6 +11,19 @@ import android.provider.MediaStore
 class MediaRepository(private val context: Context) {
 
     private val resolver get() = context.contentResolver
+
+    /** 媒体行共用投影；缩略图/时长等列在下查询按需取（getColumnIndex 兼容缺失列）。 */
+    private val itemProjection = arrayOf(
+        MediaStore.Files.FileColumns._ID,
+        MediaStore.Files.FileColumns.MEDIA_TYPE,
+        MediaStore.Files.FileColumns.DISPLAY_NAME,
+        MediaStore.Files.FileColumns.MIME_TYPE,
+        MediaStore.Files.FileColumns.DURATION,
+        MediaStore.Files.FileColumns.DATE_ADDED,
+        MediaStore.Files.FileColumns.DATE_TAKEN,
+        MediaStore.Files.FileColumns.SIZE,
+        MediaStore.Files.FileColumns.RELATIVE_PATH,
+    )
 
     fun loadFolders(): List<MediaFolder> {
         val projection = arrayOf(
@@ -79,7 +93,9 @@ class MediaRepository(private val context: Context) {
                 videoCount = b.videoCount,
                 thumbnail = b.thumbnail,
             )
-        }.sortedBy { it.name.lowercase() }
+        }
+            // 作品集素材在 app 私有目录（getExternalFilesDir），MediaStore 中无作品集行，无需过滤。
+            .sortedBy { it.name.lowercase() }
     }
 
     fun loadFolderItems(
@@ -89,33 +105,9 @@ class MediaRepository(private val context: Context) {
         sort: FolderSort,
         filter: MediaFilter,
     ): List<MediaItem> {
-        val projection = arrayOf(
-            MediaStore.Files.FileColumns._ID,
-            MediaStore.Files.FileColumns.MEDIA_TYPE,
-            MediaStore.Files.FileColumns.DISPLAY_NAME,
-            MediaStore.Files.FileColumns.MIME_TYPE,
-            MediaStore.Files.FileColumns.DURATION,
-            MediaStore.Files.FileColumns.DATE_ADDED,
-            MediaStore.Files.FileColumns.DATE_TAKEN,
-            MediaStore.Files.FileColumns.SIZE,
-            MediaStore.Files.FileColumns.RELATIVE_PATH,
-        )
-        val mediaTypeSelection = when (filter) {
-            MediaFilter.ALL ->
-                "(${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?)"
-            MediaFilter.IMAGE, MediaFilter.VIDEO ->
-                "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?"
-        }
-        val mediaTypeArgs = when (filter) {
-            MediaFilter.ALL -> arrayOf(
-                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
-                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
-            )
-            MediaFilter.IMAGE -> arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString())
-            MediaFilter.VIDEO -> arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
-        }
+        val (mediaTypeSelection, mediaTypeArgs) = mediaTypeClause(filter)
         val selection = "${MediaStore.Files.FileColumns.BUCKET_ID} = ? AND $mediaTypeSelection"
-        val args = arrayOf(bucketId.toString()) + mediaTypeArgs
+        val args = (listOf(bucketId.toString()) + mediaTypeArgs).toTypedArray()
         val (sortColumns, sortDirection) = sortSpec(sort)
         val queryArgs = Bundle().apply {
             putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
@@ -125,42 +117,90 @@ class MediaRepository(private val context: Context) {
             putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
             putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
         }
+        return queryItems(queryArgs)
+    }
 
+    /**
+     * 最近媒体（作品创建素材选择器）：按时间倒序分页，覆盖图片+视频。
+     * 作品集素材在 app 私有目录（不在 MediaStore 中），天然不会出现在这里。
+     */
+    fun loadRecentItems(offset: Int, limit: Int, filter: MediaFilter): List<MediaItem> {
+        val (mediaTypeSelection, mediaTypeArgs) = mediaTypeClause(filter)
+        val conditions = mutableListOf<String>()
+        val args = mutableListOf<String>()
+        conditions += mediaTypeSelection
+        args += mediaTypeArgs
+
+        val queryArgs = Bundle().apply {
+            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, conditions.joinToString(" AND "))
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args.toTypedArray())
+            putStringArray(
+                ContentResolver.QUERY_ARG_SORT_COLUMNS,
+                arrayOf(
+                    MediaStore.Files.FileColumns.DATE_ADDED,
+                    MediaStore.Files.FileColumns._ID,
+                ),
+            )
+            putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
+            putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
+            putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+        }
+        return queryItems(queryArgs)
+    }
+
+    private fun queryItems(queryArgs: Bundle): List<MediaItem> {
         val items = mutableListOf<MediaItem>()
         resolver.query(
             MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL),
-            projection,
+            itemProjection,
             queryArgs,
             null,
-        )?.use { cursor ->
-            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-            val mediaTypeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
-            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
-            val mimeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
-            val durationCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DURATION)
-            val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED)
-            val dateTakenCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.DATE_TAKEN)
-            val sizeCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
-            val pathCol = cursor.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+        )?.use { cursor -> items += cursor.parseItems() }
+        return items
+    }
 
-            while (cursor.moveToNext()) {
-                val isImage = cursor.getInt(mediaTypeCol) == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE
-                val id = cursor.getLong(idCol)
-                items += MediaItem(
-                    id = id,
-                    name = cursor.getString(nameCol) ?: "",
-                    uri = mediaUri(id, isImage),
-                    type = if (isImage) MediaType.IMAGE else MediaType.VIDEO,
-                    mimeType = if (mimeCol >= 0) cursor.getString(mimeCol) ?: "" else "",
-                    durationMs = if (durationCol >= 0) cursor.getLong(durationCol) else 0,
-                    dateAdded = cursor.getLong(dateCol),
-                    dateTaken = if (dateTakenCol >= 0) cursor.getLong(dateTakenCol) else 0,
-                    size = if (sizeCol >= 0) cursor.getLong(sizeCol) else 0,
-                    path = if (pathCol >= 0) cursor.getString(pathCol) ?: "" else "",
-                )
-            }
+    private fun Cursor.parseItems(): List<MediaItem> {
+        val items = mutableListOf<MediaItem>()
+        val idCol = getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+        val mediaTypeCol = getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
+        val nameCol = getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+        val mimeCol = getColumnIndex(MediaStore.Files.FileColumns.MIME_TYPE)
+        val durationCol = getColumnIndex(MediaStore.Files.FileColumns.DURATION)
+        val dateCol = getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_ADDED)
+        val dateTakenCol = getColumnIndex(MediaStore.Files.FileColumns.DATE_TAKEN)
+        val sizeCol = getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+        val pathCol = getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH)
+
+        while (moveToNext()) {
+            val isImage = getInt(mediaTypeCol) == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE
+            items += MediaItem(
+                id = getLong(idCol),
+                name = getString(nameCol) ?: "",
+                uri = mediaUri(getLong(idCol), isImage),
+                type = if (isImage) MediaType.IMAGE else MediaType.VIDEO,
+                mimeType = if (mimeCol >= 0) getString(mimeCol) ?: "" else "",
+                durationMs = if (durationCol >= 0) getLong(durationCol) else 0,
+                dateAdded = getLong(dateCol),
+                dateTaken = if (dateTakenCol >= 0) getLong(dateTakenCol) else 0,
+                size = if (sizeCol >= 0) getLong(sizeCol) else 0,
+                path = if (pathCol >= 0) getString(pathCol) ?: "" else "",
+            )
         }
         return items
+    }
+
+    private fun mediaTypeClause(filter: MediaFilter): Pair<String, List<String>> = when (filter) {
+        MediaFilter.ALL -> "(${MediaStore.Files.FileColumns.MEDIA_TYPE} = ? " +
+            "OR ${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?)" to listOf(
+            MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
+        )
+        MediaFilter.IMAGE -> "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?" to listOf(
+            MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
+        )
+        MediaFilter.VIDEO -> "${MediaStore.Files.FileColumns.MEDIA_TYPE} = ?" to listOf(
+            MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString(),
+        )
     }
 
     private fun sortSpec(sort: FolderSort): Pair<Array<String>, Int> = when (sort) {
